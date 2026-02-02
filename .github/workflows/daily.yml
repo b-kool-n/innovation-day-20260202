@@ -1,0 +1,42 @@
+name: Braze release watcher
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # daily 08:00 UTC (adjust as needed)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install -U requests beautifulsoup4 openai
+
+      - name: Run watcher
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python watch_braze_release.py
+
+      - name: Commit updated state (if changed)
+        run: |
+          if git diff --quiet; then
+            echo "No state changes."
+          else
+            git config user.name "braze-release-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add state.json
+            git commit -m "Update last seen Braze release"
+            git push
+          fi
