@@ -139,26 +139,22 @@ def summarize_with_llm(text: str) -> str:
 def post_to_slack(title: str, summary: str, source_url: str) -> None:
     webhook = os.environ["SLACK_WEBHOOK_URL"]
 
-    payload = {
-        # Fallback text (important!)
-        "text": f"Braze Release Notes: {title}\n\n{summary}\n\nSource: {source_url}",
+    summary = summary.strip()
+    if len(summary) > 3500:
+        summary = summary[:3500] + "\n…(truncated)"
 
-        # Nice formatting
-        "blocks": [
-            {
-                "type": "header",
-                "text": {"type": "plain_text", "text": f"Braze Release Notes: {title}", "emoji": False},
-            },
-            {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
-            {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Source: {source_url}"}]},
-        ],
+    text = f"*Braze Release Notes: {title}*\n\n{summary}\n\n<{source_url}|View full release notes>"
+
+    payload = {
+        "username": "SCHMACK Braze Bot",
+        "icon_emoji": ":robot_face:",
+        "text": text,
     }
 
     r = requests.post(webhook, json=payload, timeout=30)
     if r.status_code >= 400:
         raise RuntimeError(f"Slack webhook error {r.status_code}: {r.text}")
     r.raise_for_status()
-
 
 
 def main() -> None:
