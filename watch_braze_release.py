@@ -146,8 +146,6 @@ def post_to_slack(title: str, summary: str, source_url: str) -> None:
     text = f"*Braze Release Notes: {title}*\n\n{summary}\n\n<{source_url}|View full release notes>"
 
     payload = {
-        "username": "SCHMACK Braze Bot",
-        "icon_emoji": ":robot_face:",
         "text": text,
     }
 
