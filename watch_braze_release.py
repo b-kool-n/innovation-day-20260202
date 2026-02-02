@@ -11,13 +11,18 @@ from openai import OpenAI
 BRAZE_HOME = "https://www.braze.com/docs/releases/home"
 STATE_PATH = "state.json"
 
-
 def load_state() -> dict:
     if not os.path.exists(STATE_PATH):
         return {"last_seen_id": ""}
-    with open(STATE_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
 
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+            if not raw:
+                return {"last_seen_id": ""}
+            return json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return {"last_seen_id": ""}
 
 def save_state(state: dict) -> None:
     with open(STATE_PATH, "w", encoding="utf-8") as f:
@@ -118,7 +123,7 @@ def summarize_with_llm(text: str) -> str:
         "Requirements:\n"
         "- Use concise bullets.\n"
         "- Call out: major new features, integrations/partnerships, breaking changes, and anything likely to impact implementation.\n"
-        "- Keep it under ~2000 characters.\n\n"
+        "- Keep it under ~1000 characters.\n\n"
         f"Release notes:\n{text}"
     )
 
@@ -135,15 +140,25 @@ def post_to_slack(title: str, summary: str, source_url: str) -> None:
     webhook = os.environ["SLACK_WEBHOOK_URL"]
 
     payload = {
+        # Fallback text (important!)
+        "text": f"Braze Release Notes: {title}\n\n{summary}\n\nSource: {source_url}",
+
+        # Nice formatting
         "blocks": [
-            {"type": "header", "text": {"type": "plain_text", "text": f"Braze Release Notes: {title}", "emoji": False}},
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"Braze Release Notes: {title}", "emoji": False},
+            },
             {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
             {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Source: {source_url}"}]},
-        ]
+        ],
     }
 
     r = requests.post(webhook, json=payload, timeout=30)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Slack webhook error {r.status_code}: {r.text}")
     r.raise_for_status()
+
 
 
 def main() -> None:
