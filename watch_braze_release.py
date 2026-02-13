@@ -118,14 +118,31 @@ def summarize_with_llm(text: str) -> str:
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     # Keep the prompt deterministic and business-oriented.
-    prompt = (
-        "Summarize the following Braze monthly release notes for a product/solutions team.\n"
-        "Requirements:\n"
-        "- Use concise bullets.\n"
-        "- Call out: major new features, integrations/partnerships, breaking changes, and anything likely to impact implementation.\n"
-        "- Keep it under ~1000 characters.\n\n"
-        f"Release notes:\n{text}"
-    )
+prompt = (
+    "You are writing a Slack message for SCHMACK (a marketing agency) summarising Braze monthly release notes.\n"
+    "Return Slack markdown ONLY (no preamble), in EXACTLY this structure and order:\n"
+    "\n"
+    "*SCHMACK Need To Knows*\n"
+    "• <1–4 bullets: ONLY items an agency would care about: major new features, major channel/canvas capabilities, new products, notable GA releases, and anything Early Access/Beta that could change what SCHMACK can offer clients>\n"
+    "\n"
+    "*Marketer Notes:*\n"
+    "• <3–6 bullets: marketer-facing changes (campaigns/canvas, channels, targeting, reporting, deliverability tools, UX updates)>\n"
+    "\n"
+    "*Developer Notes:*\n"
+    "• <3–6 bullets: developer-facing changes (SDKs, APIs, Currents, data schema changes, integration setup, breaking changes)>\n"
+    "\n"
+    "Rules:\n"
+    "- Use the bullet character '•' at the start of every bullet line.\n"
+    "- Keep each bullet short (ideally one line). Lead with the feature name, then the impact.\n"
+    "- Tag maturity at the end: '(EA)', '(Beta)', or '(GA)' when applicable.\n"
+    "- If something is a breaking change, prefix with 'BREAKING:' and put it in Developer Notes.\n"
+    "- Avoid duplicate bullets across sections; if it's in Need To Knows, don't repeat it elsewhere unless needed.\n"
+    "- Keep total under 1,600 characters.\n"
+    "- Do not include the source URL.\n"
+    "- Exclude minor UI tweaks/bug fixes; prioritise client-facing value and rollout planning.\n"
+    "\n"
+    f"Release notes:\n{text}"
+)
 
     resp = client.responses.create(
         model="gpt-5-mini",
