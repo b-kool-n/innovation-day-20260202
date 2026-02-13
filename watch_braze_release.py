@@ -5,11 +5,11 @@ from typing import Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
-
 from openai import OpenAI
 
 BRAZE_HOME = "https://www.braze.com/docs/releases/home"
 STATE_PATH = "state.json"
+
 
 def load_state() -> dict:
     if not os.path.exists(STATE_PATH):
@@ -23,6 +23,7 @@ def load_state() -> dict:
             return json.loads(raw)
     except (json.JSONDecodeError, OSError):
         return {"last_seen_id": ""}
+
 
 def save_state(state: dict) -> None:
     with open(STATE_PATH, "w", encoding="utf-8") as f:
@@ -38,7 +39,6 @@ def fetch(url: str) -> str:
 
 def normalize_text(html_fragment: str) -> str:
     soup = BeautifulSoup(html_fragment, "html.parser")
-    # Remove nav/irrelevant elements if present
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
     text = soup.get_text("\n")
@@ -56,14 +56,12 @@ def extract_latest_by_details_title(soup: BeautifulSoup) -> Optional[Tuple[str, 
         return None
 
     latest = titles[0]
-    latest_id = latest.get("id", "").strip()
+    latest_id = (latest.get("id", "") or "").strip()
     if not latest_id:
         return None
 
-    # Find the next <details> block after the title div
     details = latest.find_next("details")
     if not details:
-        # fallback: just return section text after the title div
         extracted = normalize_text(str(latest.parent))
         return (latest_id, extracted)
 
@@ -77,9 +75,10 @@ def extract_latest_by_release_heading(soup: BeautifulSoup) -> Optional[Tuple[str
     and extract text until the next similar heading.
     Returns (synthetic_id, heading_text, extracted_text).
     """
-    # Try common heading tags
     headings = soup.find_all(["h2", "h3"])
     target_idx = None
+    heading_text = ""
+
     for i, h in enumerate(headings):
         t = " ".join(h.get_text(" ", strip=True).split())
         if re.search(r"\brelease\b", t, flags=re.IGNORECASE) and re.search(r"\b20\d{2}\b", t):
@@ -90,7 +89,6 @@ def extract_latest_by_release_heading(soup: BeautifulSoup) -> Optional[Tuple[str
     if target_idx is None:
         return None
 
-    # Create a stable synthetic ID from heading text
     synthetic_id = re.sub(r"[^a-z0-9]+", "-", heading_text.lower()).strip("-")
 
     start = headings[target_idx]
@@ -101,7 +99,6 @@ def extract_latest_by_release_heading(soup: BeautifulSoup) -> Optional[Tuple[str
             end = headings[j]
             break
 
-    # Collect nodes from start until end
     chunks = []
     node = start
     while node is not None and node != end:
@@ -117,40 +114,41 @@ def extract_latest_by_release_heading(soup: BeautifulSoup) -> Optional[Tuple[str
 def summarize_with_llm(text: str) -> str:
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-    # Keep the prompt deterministic and business-oriented.
-prompt = (
-    "You are writing a Slack message for SCHMACK (a marketing agency) summarising Braze monthly release notes.\n"
-    "Return Slack markdown ONLY (no preamble), in EXACTLY this structure and order:\n"
-    "\n"
-    "*SCHMACK Need To Knows*\n"
-    "• <1–4 bullets: ONLY items an agency would care about: major new features, major channel/canvas capabilities, new products, notable GA releases, and anything Early Access/Beta that could change what SCHMACK can offer clients>\n"
-    "\n"
-    "*Marketer Notes:*\n"
-    "• <3–6 bullets: marketer-facing changes (campaigns/canvas, channels, targeting, reporting, deliverability tools, UX updates)>\n"
-    "\n"
-    "*Developer Notes:*\n"
-    "• <3–6 bullets: developer-facing changes (SDKs, APIs, Currents, data schema changes, integration setup, breaking changes)>\n"
-    "\n"
-    "Rules:\n"
-    "- Use the bullet character '•' at the start of every bullet line.\n"
-    "- Keep each bullet short (ideally one line). Lead with the feature name, then the impact.\n"
-    "- Tag maturity at the end: '(EA)', '(Beta)', or '(GA)' when applicable.\n"
-    "- If something is a breaking change, prefix with 'BREAKING:' and put it in Developer Notes.\n"
-    "- Avoid duplicate bullets across sections; if it's in Need To Knows, don't repeat it elsewhere unless needed.\n"
-    "- Keep total under 1,600 characters.\n"
-    "- Do not include the source URL.\n"
-    "- Exclude minor UI tweaks/bug fixes; prioritise client-facing value and rollout planning.\n"
-    "\n"
-    f"Release notes:\n{text}"
-)
+    prompt = f"""You are writing a Slack message for SCHMACK (a marketing agency) summarising Braze monthly release notes.
+Return Slack markdown ONLY (no preamble), in EXACTLY this structure and order:
+
+*SCHMACK Need To Knows*
+• <1–4 bullets: ONLY items an agency would care about: major new features, major channel/canvas capabilities, new products, notable GA releases, and anything Early Access/Beta that could change what SCHMACK can offer clients>
+
+*Marketer Notes:*
+• <3–6 bullets: marketer-facing changes (campaigns/canvas, channels, targeting, reporting, deliverability tools, UX updates)>
+
+*Developer Notes:*
+• <3–6 bullets: developer-facing changes (SDKs, APIs, Currents, data schema changes, integration setup, breaking changes)>
+
+Rules:
+- Use the bullet character '•' at the start of every bullet line.
+- Keep each bullet short (ideally one line). Lead with the feature name, then the impact.
+- Tag maturity at the end: '(EA)', '(Beta)', or '(GA)' when applicable.
+- If something is a breaking change, prefix with 'BREAKING:' and put it in Developer Notes.
+- Exclude minor UI tweaks/bug fixes; prioritise client-facing value and rollout planning.
+- Avoid duplicate bullets across sections.
+- Keep total under 1,600 characters.
+- Do not include the source URL.
+
+Release notes:
+{text}
+"""
 
     resp = client.responses.create(
         model="gpt-5-mini",
         input=prompt,
     )
 
-    # The SDK returns a structured response; output_text is the simplest accessor.
-    return resp.output_text.strip()
+    summary = (getattr(resp, "output_text", "") or "").strip()
+    if not summary:
+        raise RuntimeError("OpenAI response had no output_text")
+    return summary
 
 
 def post_to_slack(title: str, summary: str, source_url: str) -> None:
@@ -160,9 +158,14 @@ def post_to_slack(title: str, summary: str, source_url: str) -> None:
     if len(summary) > 3500:
         summary = summary[:3500] + "\n…(truncated)"
 
+    # Optional: normalize bullets if the model ever slips into "-" bullets
+    summary = summary.replace("\n- ", "\n• ")
+
     text = f"*Braze Release Notes: {title}*\n\n{summary}\n\n<{source_url}|View full release notes>"
 
     payload = {
+        "username": "SCHMACK Braze Bot 1.0",
+        "icon_emoji": ":robot_face:",
         "text": text,
     }
 
@@ -193,14 +196,11 @@ def main() -> None:
         print(f"No new release detected (last_seen_id={last_seen}).")
         return
 
-    # Summarize and alert
-    # (Optionally truncate extracted_text to control token usage.)
     extracted_text = extracted_text[:20000]
 
     summary = summarize_with_llm(extracted_text)
     post_to_slack(title=title, summary=summary, source_url=BRAZE_HOME)
 
-    # Update state
     state["last_seen_id"] = latest_id
     save_state(state)
     print(f"Alert posted. Updated last_seen_id to {latest_id}.")
