@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
-from openai import OpenAI
+import anthropic
 
 BRAZE_HOME = "https://www.braze.com/docs/releases/home"
 STATE_PATH = "state.json"
@@ -112,43 +112,54 @@ def extract_latest_by_release_heading(soup: BeautifulSoup) -> Optional[Tuple[str
 
 
 def summarize_with_llm(text: str) -> str:
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+      client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    prompt = f"""You are writing a Slack message for SCHMACK (a marketing agency) summarising Braze monthly release notes.
-Return Slack markdown ONLY (no preamble), in EXACTLY this structure and order:
+      prompt = f"""You are writing a Slack message for SCHMACK (a marketing 
+  agency) summarising Braze monthly release notes.
+  Return Slack markdown ONLY (no preamble), in EXACTLY this structure and order:
 
-*SCHMACK Need To Knows*
-• <1–4 bullets: ONLY items an agency would care about: major new features, major channel/canvas capabilities, new products, notable GA releases, and anything Early Access/Beta that could change what SCHMACK can offer clients>
+  *SCHMACK Need To Knows*
+  • <1–4 bullets: ONLY items an agency would care about: major new features, 
+  major channel/canvas capabilities, new products, notable GA releases, and 
+  anything Early Access/Beta that could change what SCHMACK can offer clients>
 
-*Marketer Notes:*
-• <3–6 bullets: marketer-facing changes (campaigns/canvas, channels, targeting, reporting, deliverability tools, UX updates)>
+  *Marketer Notes:*
+  • <3–6 bullets: marketer-facing changes (campaigns/canvas, channels, 
+  targeting, reporting, deliverability tools, UX updates)>
 
-*Developer Notes:*
-• <3–6 bullets: developer-facing changes (SDKs, APIs, Currents, data schema changes, integration setup, breaking changes)>
+  *Developer Notes:*
+  • <3–6 bullets: developer-facing changes (SDKs, APIs, Currents, data schema 
+  changes, integration setup, breaking changes)>
 
-Rules:
-- Use the bullet character '•' at the start of every bullet line.
-- Keep each bullet short (ideally one line). Lead with the feature name, then the impact.
-- Tag maturity at the end: '(EA)', '(Beta)', or '(GA)' when applicable.
-- If something is a breaking change, prefix with 'BREAKING:' and put it in Developer Notes.
-- Exclude minor UI tweaks/bug fixes; prioritise client-facing value and rollout planning.
-- Avoid duplicate bullets across sections.
-- Keep total under 1,600 characters.
-- Do not include the source URL.
+  Rules:
+  - Use the bullet character '•' at the start of every bullet line.
+  - Keep each bullet short (ideally one line). Lead with the feature name, then 
+  the impact.
+  - Tag maturity at the end: '(EA)', '(Beta)', or '(GA)' when applicable.
+  - If something is a breaking change, prefix with 'BREAKING:' and put it in 
+  Developer Notes.
+  - Exclude minor UI tweaks/bug fixes; prioritise client-facing value and 
+  rollout planning.
+  - Avoid duplicate bullets across sections.
+  - Keep total under 1,600 characters.
+  - Do not include the source URL.
 
-Release notes:
-{text}
-"""
+  Release notes:
+  {text}
+  """
 
-    resp = client.responses.create(
-        model="gpt-5-mini",
-        input=prompt,
-    )
+      response = client.messages.create(
+          model="claude-opus-4-8",
+          max_tokens=4096,
+          thinking={"type": "adaptive"},
+          messages=[{"role": "user", "content": prompt}],
+      )
 
-    summary = (getattr(resp, "output_text", "") or "").strip()
-    if not summary:
-        raise RuntimeError("OpenAI response had no output_text")
-    return summary
+      summary = next((b.text for b in response.content if b.type == "text"),
+  "").strip()
+      if not summary:
+          raise RuntimeError("Claude response had no text content")
+      return summary
 
 
 def post_to_slack(title: str, summary: str, source_url: str) -> None:
