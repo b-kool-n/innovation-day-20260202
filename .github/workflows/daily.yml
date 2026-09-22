@@ -2,19 +2,24 @@ name: Braze release watcher
 
 on:
   schedule:
-    - cron: "0 8 * * *"   # daily 08:00 UTC (adjust as needed)
+    - cron: "0 8 * * *" # daily 08:00 UTC (adjust as needed)
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Stop overlapping runs from racing each other's state.json push.
+concurrency:
+  group: braze-release-watcher
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -31,12 +36,24 @@ jobs:
 
       - name: Commit updated state (if changed)
         run: |
-          if git diff --quiet; then
+          if git diff --quiet -- state.json; then
             echo "No state changes."
-          else
-            git config user.name "braze-release-bot"
-            git config user.email "actions@users.noreply.github.com"
-            git add state.json
-            git commit -m "Update last seen Braze release"
-            git push
+            exit 0
           fi
+          git config user.name "braze-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git commit -m "Update last seen Braze release"
+          # main may have moved on (another run, a re-run, a manual edit).
+          # Rebase our single state.json commit on top of the remote, then
+          # push. Retry once so a race doesn't fail an otherwise-good run.
+          for attempt in 1 2; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "Pushed state.json on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Push rejected on attempt ${attempt}; retrying after pull."
+          done
+          echo "Could not push state.json after retries." >&2
+          exit 1
