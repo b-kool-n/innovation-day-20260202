@@ -118,6 +118,12 @@ def item_key(item: dict) -> str:
     return f"{item.get('sort_date', '')}:{slug(item.get('title', ''))}"
 
 
+def title_for_date(month: str) -> str:
+    """Feed dates read 'August 20, 2026'; the Slack headline drops the comma
+    to read 'August 20 2026'."""
+    return (month or "Latest updates").replace(",", "")
+
+
 def format_items_for_llm(items: list) -> str:
     """Render new items as clean, tagged text for the summariser."""
     lines = []
@@ -235,17 +241,34 @@ def main() -> None:
         print("No new release items detected.")
         return
 
-    # Title the post by the newest release date among the new items.
-    newest_month = new_items[0].get("month", "Latest updates")
-    title = f"{newest_month} — {len(new_items)} new update(s)"
+    # Group the new items by their release date and post once per date, so a
+    # single release (e.g. all of "August 20, 2026") becomes one tidy post
+    # rather than one post per feature. Order by sort_date, newest first.
+    dates = []
+    by_date = {}
+    for it in new_items:
+        d = it.get("sort_date", "")
+        if d not in by_date:
+            by_date[d] = []
+            dates.append(d)
+        by_date[d].append(it)
+    dates.sort(reverse=True)
 
-    text = format_items_for_llm(new_items)
-    summary = summarize_with_llm(text)
-    post_to_slack(title=title, summary=summary, source_url=BRAZE_HOME)
+    posted = 0
+    for d in dates:
+        group = by_date[d]
+        title = title_for_date(group[0].get("month", ""))
+        text = format_items_for_llm(group)
+        summary = summarize_with_llm(text)
+        post_to_slack(title=title, summary=summary, source_url=BRAZE_HOME)
+        posted += len(group)
 
     seen.update(all_keys)
     save_state({"seen": sorted(seen), "baselined": True})
-    print(f"Alert posted for {len(new_items)} new item(s). State now tracks {len(seen)} items.")
+    print(
+        f"Posted {len(dates)} release date(s) covering {posted} new item(s). "
+        f"State now tracks {len(seen)} items."
+    )
 
 
 if __name__ == "__main__":
